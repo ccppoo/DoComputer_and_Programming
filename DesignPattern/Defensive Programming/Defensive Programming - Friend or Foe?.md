@@ -52,9 +52,9 @@ by Tyler Hoffman
     
     * 소프트웨어 정지와 데드락
     
-    * Use After Free Bugs
+    * 메모리 해제 후 재사용 버그
     
-    * State Transition Errors
+    * 상태 변이 에러
     
     * 프로그래머에 의한 컴파일 타임 에러
     
@@ -217,14 +217,217 @@ falut를 정확한 순간에 던지는 것이 개발자로 하여금 근본 원�
 
 ## 공격적 프로그래밍 실습
 
+구체적인 예시를 통해 공격적인 프로그래밍에 대해 알아봅시다
+
 ### 함수의 인자 평가하기
-    
+
+API를 사용하는 개발자가 함수에 적절하지 않은 이자를 전달하는 경우, 애플리케이션이 고치라고 당장 알리세요.
+
+함수가 적절하지 않은 인자를 받았을 떄 `-1`을 반환값으로 돌려주는 것만큼 최악의 함수는 없습니다.
+
+```c
+void device_set_name(char *name, size_t name_len) {
+  ASSERT(name && name_len <= 16);
+  // ...
+}
+```
+
+예시처럼 바로 `ASSERT`를 사용하지 않는 유일한 경우로는 제가 속해있는 조직 외부 사람들이 사용하는 라이브러리를 제작할 때 입니다.<br>
+이런 경우, 인자가 유효한지를 판단하는 `ASSERT`를 사용자가 직접 결정 할 수 있도록 만듭니다.
+
+예시로 RTOS 함수의 `configASSERT` 옵션이 있습니다.
+
 ### 리소스 고갈 대처하기
-    
+
+임베딩 시스템에서 동적 메모리를 사용하는 것이 탐탁지 않지만, 정적 메모리만으로 부족한 복잡한 시스템을 작동시키기 위해선 사용하게됩니다.<br>
+동적 메모리를 사용해도 가끔 메모리가 부족해지는 상황이 발생하곤 합니다.<br>
+메모리가 얼마 남지 않았을 때, 시스템은 기존에 점유하고 있는 메모리와 데이터 소모성 작업을 관리해야합니다.
+
+그러나 펌웨어의 동적 메모리 풀이 모두 점유된 상황이  발생한다면 **왜**, **언제**, 어디서 발생했는지 찾아내야합니다.<br>
+메모리 릭(leak)일 수도 있고, 힙 메모리에 잘못 할당되어 있을 수도 있습니다.<br>
+시스템이 스스로 복구될 수 있기 때문에 메모리 고갈 문제는 상용화 단계에서 당장 크게 눈에 띄지 않을수도 있지만,<br>
+개발이나 테스트 단계일 때는 근본 원인을 찾아서 해결해야합니다.
+
+우선 `malloc()` 함수가 제대로 작동했는지 부터 점검할 필요가 있습니다
+
+```c
+void *malloc_assert(size_t n){
+  void *p = malloc(n)
+  ASSERT(p);
+  return p;
+  // ....
+}
+```
+
+반드시 메모리가 확보되어야 하는 버퍼, 리퀘스트(request), 초기화, 등에서 `malloc()`이 호출되는 구간에서는 반드시 실패해선 안됩니다.<br>
+
+RTOS 기반 시스템에서 자주 언급되는 문제로는 큐(queue)에 쌓인 작업이 제때 처리되지 않아서 큐에 더 이상 추가(put)할 수 없는 상황이 있습니다.<br>
+
+이런 문제가 시스템 전체를 정지시키거나, 셧 다운되는 수준까지 이르지 않지만<br>
+반드시 처리해야하는 이벤트가 무시되는 경우 디바이스 작동에 큰 문제가 발생할 가능성이 있습니다.
+
+이런 문제는 반드시 해결해야합니다.
+
+큐에 작업을 추가하는 함수에 작업이 정상적으로 큐에 등록이 되었는지 `ASSERT()`를 이용해 확인할 수 있습니다.
+
+```c
+void critical_event(void){
+  //...
+  const bool success = xQueueSend(q, &item, 1000 /* 지연시간 */)
+  ASSERT(success);
+  // ...
+}
+```
+
+큐가 꽉차는 문제를 디버깅할 때 [Python GDB Script](https://interrupt.memfault.com/blog/automate-debugging-with-gdb-python-api)를 이용해 큐에 있는 컨텐츠를 덤프하는 것을 권장드립니다.<br>
+
+```
+(gdb) queue_print s_event_queue
+Queue Status: 10/10 events in queue (FULL!)
+0: Addr: 0x200070c0, event: BLE_PACKET
+1: Addr: 0x200070a8, event: TICK_EVENT
+2: Addr: 0x20007088, event: BLE_PACKET
+3: Addr: 0x20007070, event: BLE_PACKET
+4: Addr: 0x20007050, event: BLE_PACKET
+5: Addr: 0x20007038, event: BLE_PACKET
+6: Addr: 0x20007018, event: BLE_PACKET
+7: Addr: 0x20007000, event: BLE_PACKET
+8: Addr: 0x20006fe0, event: BLE_PACKET
+9: Addr: 0x20006fc8, event: BLE_PACKET
+```
+
+이 예시에서는 큐에 패킷으로 가득찼고, 패킷이 제 속도로 처리되지 않은 것을 확인할 수 있습니다.<br>
+어떤 문제가 발생했는지 알 수 있으니 해결책을 찾을 수 있겠죠?
+
 ### 소프트웨어 정지와 데드락
+
+임베디드 디바이스는 한순간의 지연이나 정지현상 없이 빠르게 사용자 input과 패킷에 대해 반응할 수 있어야합니다.
+
+이전 프로젝트에서 느린 처리 속도로 인해서 시스템이 2-3초간 정지되는 것을 수 없이 봤는데요.<br>
+이런 일이 매번 일어날때마다 사용자 경험을 해치는 것은 물론이고, timeout인해 다른 시스템에 문제가 발생해 고생했습니다.
+
+최악의 부분은 이런 문제들이 개발자가 알아차리기까지 시간이 오래걸린다는 점입니다.
+
+펌웨어를 릴리스하기 전에 [task watchdogs](https://interrupt.memfault.com/blog/firmware-watchdog-best-practices#adding-a-task-watchdog)를 이용해 좀더 가혹한 조건으로 테스트를 진행하면 미리 문제를 잡아낼 수 있습니다.<br>
+timeout을 이용해 처리 시간이 길거라고 예상되는 작업에 `ASSERT`를 하는 방법이 있습니다.
+
+mutex가 **시간 내에** 성공적으로 lock되는 것을 assert 하기 위해 RTOS call에 timeout을 설정하면 됩니다.
+
+```c
+void timing_sensitive_task(void) {
+  const bool success = mutex_lock(&s_mutex, 1000 /* 1초 */ );
+  ASSERT(success);
+  {
+    // ...
     
-### Use After Free Bugs
-    
-### State Transition Errors
-    
+  }
+}
+```
+
+[task watchdogs](https://interrupt.memfault.com/blog/firmware-watchdog-best-practices#adding-a-task-watchdog)를 정지 현상을 발견하도록 설정했다면 지연시간을 무한으로 시간을 잡으면 됩니다.
+
+```c
+void timing_sensitive_task(void) {
+  // Task watchdog이 정지를 assert 할겁니다
+  const bool success = mutex_lock(&s_mutex, INFINITY);
+}
+```
+
+제품을 릴리스하기 전에는 코드를 *방어적*으로 만들는 timeout을 없애거나 늘려서, 최악 직전의 조건에서는 동작하게끔 만드시면 됩니다. 
+
+### 메모리 해제 후 재사용 버그
+
+원제 : Use After free() Bugs
+  
+`malloc()`으로 할당되고 나중에 `free()`된 버퍼 메모리는 소프트웨어에 의해 **절대** 다시 쓰여선 안됩니다.
+
+하지만 이런 일은 종종 일어나죠.
+
+이런 현상은 "메모리 해제 후 재사용(Use After Free)" 버그로 불립니다.<br>
+이 버그가 발생해도 아무일도 안생길 확률은 매우 높습니다.
+
+그러나 가끔, 메모리 오염(Memory Corruption) 발생해 기괴한 모습으로 나타날 수 있습니다.<br>
+디버깅 난이도가 매우 높아서 한번 잘못 발생하면 고생하실 겁니다.
+
+> 메모리 오염 문제로 인해 고생하고 있으면
+> 이전 글의 [메모리 오염 디버깅](https://interrupt.memfault.com/blog/cortex-m-watchpoints#memory-corruption) 항목을 읽는 것을 권장드립니다.
+
+'메모리 해제 후 재사용' 버그를 방지하는 방법으로 메모리를 해제하기 전에 메모리에 *접근하면 안되는 메모리 주소*로 다시 덮어 쓰는 것입니다.
+
+'메모리 해제 후 재사용' 버그가 발생하고 (재수 없게) 문제가 발생했을 때, *접근해선 안되는 메모리 주소*를 읽으면 코어 덤프를 만들게끔 유도 하는 것입니다.
+
+여기서 포인트는 *접근해선 안되는 메모리 주소*를 나중에 내가 **알아볼 수 있는 주소**로 정한뒤(상수) 디버깅 할 때 유효하지 않은 메모리 접근이 발생했을 떄<br>
+내가 지정한 주소가 코어 덤프(core dump)에 나와 있으면 '아 메모리 버그가 일어난거구나'하고 넘어갈 수 있는겁니다.
+
+```c
+void my_free(void *p){
+  const size_t num_bytes = prv_get_size(p);
+  // 바이트에 내가 알아볼 수 있는 주소로 채워 넣습니다
+  memset(p, 0xbd, num_bytes);
+  free(p);
+}
+```
+
+*0xbdbdbdbd*에 접근한 시스템 에러가 발생하면 알 수 있겠죠?
+ 
+### 상태 변이 에러
+
+(원제 : State Transition Errors)
+
+(역주 : 상태 변이 또는 상태 천이 에러에 대해서 감이 안오시면 다음 글을 읽어보세요 - [state transition Error](https://velog.io/@hyewon3938/%EB%94%94%EB%B2%84%EA%B9%85-Warning-Cannot-update-during-an-existing-state-transition-such-as-within-render.-Render-methods-should-be-a-pure-function-of-props-and-state))
+
+대부분의 상태 변이(State Transition)에 관한 작업은 대부분 모범 사례가 존재하고, 자동화된 모듈이 존재하기 때문에 문제가 발생할 확률이 적습니다.<br>
+이런 경우를 제외한다면 상태 머신(state machine)을 두고 시스템을 감시하는 것이 중요합니다.
+
+`kState_Flushing`과 `kState_Committing` 두 가지 상태가 존재한다고 합시다.
+
+Commit 상태는 반드시 Flush 상태 이후로 발생하는 것을 아래의 코드처럼 확인 할 수 있습니다.
+
+```c
+void on_commit(eState prev_state) {
+  ASSERT(prev_state == kState_Flushing);
+}
+```
+
 ### 프로그래머에 의한 컴파일 타임 에러
+
+정적인 환경에서 더 빠르게 실수를 발견하기 위해 `static_assert`를 이용할 수 잇습니다.
+
+`static_assert`를 이용해서 제가 정의한 구조체가 일정 크기를 초과하지 않도록 늘 점검합니다.
+
+```c
+typedef struct {
+  uint32_t count;
+  uint8_t buf[12];
+  uint8_t new_value;  // 새로 추가함
+} MyStruct;
+
+_Static_assert(sizeof(MyStruct) <= 16, "너무 큽니다!");
+```
+
+이 코드를 컴파일 하면 아래와 같이 나옵니다.
+
+```
+$ gcc test.c
+test.c:14:1: error: static_assert failed due to requirement
+    'sizeof(MyStruct) <= 16' "Oops, too large!"
+
+_Static_assert(sizeof(MyStruct) <= 16, "Oops, too large!");
+^              ~~~~~~~~~~~~~~~~~~~~~~
+1 error generated.
+```
+
+정적으로 정의된 모든 것을 이와 같은 방식으로 검사할 수 있습니다.<br>
+구조체, 열거형 데이터 타입(Enum), 문자열 길이, 등이 있겠네요.
+
+추가로 데이터 타입인 구조체를 바꿀 때 동시에 문서화 작업을 하도록 유도하거나,<br>
+변화에 대해서 이유를 서술하도록 메세지를 남기기도 합니다.
+
+```c
+_Static_assert(sizeof(MyStruct) == 16,
+    "구조체의 크기를 바꾸려고 합니다! "
+    "사내 문서 항목을 참조하거나 업데이트 해주세요 ..."
+    "변경할 사항은 다음과 같은 진행 방식에 따라 진행해주세요 ...");
+```
+
+`static_assert`는 최종 릴리스에 출력되지 않으므로 자유롭게 사용하세요!
