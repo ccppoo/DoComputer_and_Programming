@@ -102,3 +102,22 @@
 4. + 메인 메모리에서의 캐시 미스는 CPU의 캐시 미스 패널티에 비해 상당히 크다.
 
 *너무 당연한 이야기를 길게 늘여뜨린 감이 있지만, 추측으로만 모호하게 알고 있는 내용을 더듬는 수준으로 알 수 있게되었다*
+
+## 참고
+
+[CSAPP- Virtual Memory](https://it-eldorado.tistory.com/52)
+
+[Virtual memory caches](https://talkingaboutme.tistory.com/entry/Memory-Virtual-memory-caches)
+
+[페이징 - Wikipedia](https://ko.wikipedia.org/wiki/페이징)
+
+[Virtual Memory - Wekipedia](https://en.wikipedia.org/wiki/Virtual_memory)
+
+[Memory Mapped File - Wekipidia](https://en.wikipedia.org/wiki/Memory-mapped_file)
+
+Memory Mapped I/O는 전혀 다른 개념으로
+
+메인 메모리에 주변기기(마우스, 키보드, 등)가 입력(I/O)할 때 신호를 저장하는 메모리를 부르는 것이다.
+
+추가로 외부 입력기기의 신호를 처리하는 방법으로 Isolated(Ported) I/O는 메인 메모리와 별개로 존재하는 메모리에 신호를 입력하게끔 설계되어 있다.<br>
+메인 메모리와 구분되어 있어 포트(port)라고 부르며, 입력된 신호가 I/O로 판단되면 CPU가 메모리 주소를 할당해 사용할 수 있도록 한다는 특징이 있다.
