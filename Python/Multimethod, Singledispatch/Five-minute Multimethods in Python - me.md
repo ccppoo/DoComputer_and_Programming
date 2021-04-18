@@ -41,7 +41,8 @@ def foo(a, b):
         # ...
     if isinstance(a, str) and isinstance(n, str):
         # ...
-```<br>
+```
+
 ([Five-minute Multimethods in Python](./Five-minute Multimethods in Python.md) 첫 예시)
 
 (단일책임을 지지않는다고 볼 수 있나?)
